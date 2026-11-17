@@ -73,7 +73,10 @@ safe_date <- function(x) {
         "mdy",
         "Ymd",
         "dmY",
-        "mdY"
+        "mdY",
+        "ymd HMS", 
+        "dmy HMS", 
+        "mdy HMS"
       )
       
     )
@@ -116,6 +119,8 @@ process_workbook <- function(file) {
       sheet = sheet
     )
     
+    # Remove completely empty rows
+    df <- df[rowSums(!is.na(df)) > 0, , drop = FALSE]
     
     # Identify columns
     
@@ -124,28 +129,21 @@ process_workbook <- function(file) {
       c(
         "ID/Name",
         "ID",
-        "Name",
-        "Animal ID",
-        "Animal Name",
-        "Individual ID",
-        "Individual Name"
+        "Name"
       )
     )
     
     
     sex_col <- find_column(
       df,
-      c("Sex", "Gender")
+      c("Sex")
     )
     
     
     notch_col <- find_column(
       df,
       c(
-        "Notch",
-        "Notch Number",
-        "Notch ID",
-        "Ear Notch"
+        "Notch"
       )
     )
     
@@ -153,10 +151,7 @@ process_workbook <- function(file) {
     dob_col <- find_column(
       df,
       c(
-        "Date of Birth",
-        "DOB",
-        "Birth Date",
-        "Date Born"
+        "Date of Birth"
       )
     )
     
@@ -164,9 +159,7 @@ process_workbook <- function(file) {
     age_col <- find_column(
       df,
       c(
-        "Age",
-        "Age Years",
-        "Age in Years"
+        "Age(years)"
       )
     )
     
@@ -175,7 +168,7 @@ process_workbook <- function(file) {
       df,
       c(
         "Age Class",
-        "AgeClass"
+        "Age_Class"
       )
     )
     
@@ -184,7 +177,7 @@ process_workbook <- function(file) {
       df,
       c(
         "Age Category",
-        "AgeCategory"
+        "Age_Category"
       )
     )
     
@@ -206,7 +199,7 @@ process_workbook <- function(file) {
     
     data.frame(
       
-      Animal_ID = as.character(
+      ID/Name = as.character(
         get_column(id_col)
       ),
       
@@ -218,11 +211,11 @@ process_workbook <- function(file) {
         get_column(notch_col)
       ),
       
-      DOB = safe_date(
+      Date_of_Birth = safe_date(
         get_column(dob_col)
       ),
       
-      Age = suppressWarnings(
+      Age(years) = suppressWarnings(
         as.numeric(get_column(age_col))
       ),
       
@@ -252,9 +245,9 @@ process_workbook <- function(file) {
   
   combined <- combined %>%
     
-    mutate(
+    dplyr::mutate(
       
-      across(
+      dplyr::across(
         c(
           Animal_ID,
           Sex,
@@ -270,7 +263,7 @@ process_workbook <- function(file) {
       
       # Standardise sex
       
-      Sex = case_when(
+      Sex = dplyr::case_when(
         
         tolower(Sex) %in% c(
           "m",
@@ -291,7 +284,7 @@ process_workbook <- function(file) {
       
       # Missing age class
       
-      Age_Class = ifelse(
+      Age_Class = dplyr::ifelse(
         is.na(Age_Class) | Age_Class == "",
         "Unknown",
         Age_Class
@@ -300,7 +293,7 @@ process_workbook <- function(file) {
       
       # Missing age category
       
-      Age_Category = ifelse(
+      Age_Category = dplyr::ifelse(
         is.na(Age_Category) | Age_Category == "",
         "Unknown",
         Age_Category
@@ -309,7 +302,7 @@ process_workbook <- function(file) {
       
       # Notch status
       
-      Notch_Status = case_when(
+      Notch_Status = dplyr::case_when(
         
         is.na(Notch) | Notch == "" ~ "Not Recorded",
         
@@ -360,16 +353,17 @@ process_workbook <- function(file) {
   
   combined <- combined %>%
     
-    filter(
+    dplyr::filter(
       
       !(
-        is.na(Animal_ID) &
+        is.na(Animal_ID) | Animal_ID == "") &
           is.na(Sex) &
           is.na(DOB) &
           is.na(Age)
       )
       
     )
+)
   
   
   return(combined)
@@ -1078,25 +1072,36 @@ server <- function(input, output, session) {
   # 10. ANIMAL REGISTER
   # ==========================================================
   
-  output$animal_table <- renderDT({
+  output$animal_table <- DT:renderDT({
     
     data <- filtered_data() %>%
       
-      select(
-        Animal_ID,
+        dplyr::select(
+        ID/Name,
         Sex,
         Notch,
-        DOB,
-        Age,
+        Date_of_Birth ,
+        Age(years),
         Age_Class,
         Age_Category,
         Source_Sheet
       )
     
-    datatable(
+    names(data) <- c(
+      "ID/Name",
+      "Sex",
+      "Notch",
+      "Date_of_Birth",
+      "Age(years)",
+      "Age_Class",
+      "Age_Category",
+      "Source_Sheet"
+    )
+    
+    DT::datatable(
       
       data,
-      
+      extensions = "Buttons",
       options = list(
         pageLength = 10,
         scrollX = TRUE,
