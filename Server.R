@@ -1,101 +1,106 @@
-
-# ============================================================
-# WILDLIFE POPULATION OVERVIEW
-# SERVER FILE
-# ============================================================
-
-# ============================================================
-# 1. HELPER FUNCTIONS
-# ============================================================
-
-# Standardise column names
-
-clean_names <- function(x) {
-  
-  x <- tolower(trimws(x))
-  
-  x <- gsub("[^a-z0-9]", "", x)
-  
-  return(x)
-  
-}
+# =========================================================
+# WILDLIFE POPULATION DEMOGRAPHIC DASHBOARD
+# SERVER
+# =========================================================
 
 
-# Identify matching columns
+# =========================================================
+# HELPER FUNCTION: FIND COLUMN
+# =========================================================
 
-find_column <- function(data, possible_names) {
+find_column <- function(df, possible_names) {
   
-  existing <- clean_names(names(data))
+  clean_names <- function(x) {
+    tolower(gsub("[^a-z0-9]", "", x))
+  }
   
-  possible <- clean_names(possible_names)
+  actual_names <- names(df)
   
-  match_index <- match(possible, existing)
+  cleaned_actual <- clean_names(actual_names)
+  
+  cleaned_possible <- clean_names(possible_names)
+  
+  match_index <- match(
+    cleaned_possible,
+    cleaned_actual
+  )
   
   match_index <- match_index[!is.na(match_index)]
   
   if (length(match_index) == 0) {
-    return(NULL)
+    return(NA_character_)
   }
   
-  names(data)[match_index[1]]
-  
+  actual_names[match_index[1]]
 }
 
 
-# Convert dates safely
+# =========================================================
+# HELPER FUNCTION: CONVERT DATES
+# =========================================================
 
 safe_date <- function(x) {
   
   if (inherits(x, "Date")) {
-    return(as.Date(x))
+    return(x)
   }
   
-  if (inherits(x, "POSIXt")) {
+  if (inherits(x, "POSIXct") ||
+      inherits(x, "POSIXlt")) {
     return(as.Date(x))
   }
   
   if (is.numeric(x)) {
-    
-    return(
-      as.Date(x, origin = "1899-12-30")
-    )
-    
+    return(as.Date(x, origin = "1899-12-30"))
   }
   
-  parsed <- suppressWarnings(
-    
+  parsed_dates <- suppressWarnings(
     lubridate::parse_date_time(
       as.character(x),
-      
       orders = c(
         "ymd",
         "dmy",
         "mdy",
-        "Ymd",
-        "dmY",
-        "mdY",
-        "ymd HMS", 
-        "dmy HMS", 
+        "ymd HMS",
+        "dmy HMS",
         "mdy HMS"
       )
-      
     )
-    
   )
   
-  as.Date(parsed)
-  
+  as.Date(parsed_dates)
 }
 
 
-# ============================================================
-# 2. PROCESS EXCEL WORKBOOK
-# ============================================================
+# =========================================================
+# HELPER FUNCTION: CLEAN AGE VALUES
+# =========================================================
+
+safe_numeric <- function(x) {
+  
+  suppressWarnings(
+    as.numeric(as.character(x))
+  )
+}
+
+
+# =========================================================
+# PROCESS EXCEL WORKBOOK
+# =========================================================
 
 process_workbook <- function(file) {
   
-  # Get worksheet names
+  # Check file path
+  if (!is.character(file) ||
+      length(file) != 1 ||
+      is.na(file) ||
+      !file.exists(file)) {
+    
+    stop("Please provide a valid Excel file path.")
+    
+  }
   
+  # Get worksheet names
   sheets <- readxl::excel_sheets(file)
   
   if (length(sheets) != 5) {
@@ -109,9 +114,7 @@ process_workbook <- function(file) {
     
   }
   
-  
-  # Read each worksheet
-  
+  # Read all worksheets
   all_data <- lapply(sheets, function(sheet) {
     
     df <- readxl::read_excel(
@@ -119,129 +122,135 @@ process_workbook <- function(file) {
       sheet = sheet
     )
     
+    df <- as.data.frame(df)
+    
     # Remove completely empty rows
-    df <- df[rowSums(!is.na(df)) > 0, , drop = FALSE]
+    if (nrow(df) > 0) {
+      
+      df <- df[
+        rowSums(!is.na(df)) > 0,
+        ,
+        drop = FALSE
+      ]
+      
+    }
     
     # Identify columns
-    
     id_col <- find_column(
       df,
-      c(
-        "ID/Name",
-        "ID",
-        "Name"
-      )
+      c("ID/Name", "ID", "Name", "Animal ID")
     )
-    
     
     sex_col <- find_column(
       df,
-      c("Sex")
+      c("Sex", "Gender")
     )
-    
     
     notch_col <- find_column(
       df,
-      c(
-        "Notch"
-      )
+      c("Notch", "Notch Status")
     )
-    
     
     dob_col <- find_column(
       df,
       c(
-        "Date of Birth"
+        "Date_of_Birth",
+        "Date of Birth",
+        "DOB",
+        "Birth Date"
       )
     )
-    
     
     age_col <- find_column(
       df,
       c(
-        "Age(years)"
+        "Age(years)",
+        "Age (years)",
+        "Age",
+        "Current Age",
+        "Age_Years"
       )
     )
-    
     
     age_class_col <- find_column(
       df,
-      c(
-        "Age Class",
-        "Age_Class"
-      )
+      c("Age_Class", "Age Class")
     )
-    
     
     age_category_col <- find_column(
       df,
-      c(
-        "Age Category",
-        "Age_Category"
-      )
+      c("Age_Category", "Age Category")
     )
     
+    # Required columns
+    # Age and Date of Birth are optional.
+    required <- c(
+      ID_Name = id_col,
+      Sex = sex_col,
+      Notch = notch_col,
+      Age_Class = age_class_col,
+      Age_Category = age_category_col
+    )
     
-    # Extract columns
+    missing <- names(required)[is.na(required)]
     
-    get_column <- function(column) {
+    if (length(missing) > 0) {
       
-      if (is.null(column)) {
-        return(rep(NA, nrow(df)))
-      }
-      
-      df[[column]]
+      stop(
+        paste(
+          "Worksheet",
+          sheet,
+          "is missing:",
+          paste(missing, collapse = ", ")
+        )
+      )
       
     }
     
-    
-    # Create standardised dataset
-    
+    # Standardise column names
     data.frame(
       
-      ID/Name = as.character(
-        get_column(id_col)
-      ),
+      Animal_ID = as.character(df[[id_col]]),
       
-      Sex = as.character(
-        get_column(sex_col)
-      ),
+      Sex = as.character(df[[sex_col]]),
       
-      Notch = as.character(
-        get_column(notch_col)
-      ),
+      Notch = as.character(df[[notch_col]]),
       
-      Date_of_Birth = safe_date(
-        get_column(dob_col)
-      ),
+      DOB = if (!is.na(dob_col)) {
+        safe_date(df[[dob_col]])
+      } else {
+        as.Date(rep(NA, nrow(df)))
+      },
       
-      Age(years) = suppressWarnings(
-        as.numeric(get_column(age_col))
-      ),
+      Age = if (!is.na(age_col)) {
+        safe_numeric(df[[age_col]])
+      } else {
+        rep(NA_real_, nrow(df))
+      },
       
-      Age_Class = as.character(
-        get_column(age_class_col)
-      ),
+      Age_Class = as.character(df[[age_class_col]]),
       
-      Age_Category = as.character(
-        get_column(age_category_col)
-      ),
+      Age_Category = as.character(df[[age_category_col]]),
       
-      Source_Sheet = sheet,
+      Source_Sheet = rep(sheet, nrow(df)),
       
       stringsAsFactors = FALSE
       
     )
     
-  })
+  })  # Closes lapply() and its function
   
   
-  # Combine all five worksheets
+  # =======================================================
+  # COMBINE ALL WORKSHEETS
+  # =======================================================
   
   combined <- dplyr::bind_rows(all_data)
   
   
-  # Clean data
+  # =======================================================
+  # CLEAN AND STANDARDISE DATA
+  # =======================================================
   
   combined <- combined %>%
     
@@ -256,24 +265,15 @@ process_workbook <- function(file) {
           Age_Category,
           Source_Sheet
         ),
-        
         ~ trimws(as.character(.x))
       ),
       
-      
       # Standardise sex
-      
       Sex = dplyr::case_when(
         
-        tolower(Sex) %in% c(
-          "m",
-          "male"
-        ) ~ "Male",
+        tolower(Sex) %in% c("m", "male") ~ "Male",
         
-        tolower(Sex) %in% c(
-          "f",
-          "female"
-        ) ~ "Female",
+        tolower(Sex) %in% c("f", "female") ~ "Female",
         
         is.na(Sex) | Sex == "" ~ "Unknown",
         
@@ -281,37 +281,27 @@ process_workbook <- function(file) {
         
       ),
       
-      
-      # Missing age class
-      
-      Age_Class = dplyr::ifelse(
+      # Standardise age class
+      Age_Class = dplyr::if_else(
         is.na(Age_Class) | Age_Class == "",
         "Unknown",
         Age_Class
       ),
       
-      
-      # Missing age category
-      
-      Age_Category = dplyr::ifelse(
+      # Standardise age category
+      Age_Category = dplyr::if_else(
         is.na(Age_Category) | Age_Category == "",
         "Unknown",
         Age_Category
       ),
       
-      
-      # Notch status
-      
+      # Determine notch status
       Notch_Status = dplyr::case_when(
         
         is.na(Notch) | Notch == "" ~ "Not Recorded",
         
-        tolower(Notch) %in% c(
-          "no",
-          "none",
-          "not notched",
-          "n/a"
-        ) ~ "No Notch",
+        tolower(Notch) %in%
+          c("no", "none", "not notched", "n/a") ~ "No Notch",
         
         TRUE ~ "Notched"
         
@@ -320,222 +310,211 @@ process_workbook <- function(file) {
     )
   
   
-  # Calculate age where missing
+  # =======================================================
+  # CALCULATE AGE WHERE AGE IS MISSING
+  # =======================================================
   
   calculated_age <- floor(
-    
     as.numeric(
-      
       difftime(
         Sys.Date(),
         combined$DOB,
         units = "days"
       )
-      
     ) / 365.2425
-    
   )
-  
   
   combined$Age <- ifelse(
-    
-    is.na(combined$Age) &
-      !is.na(combined$DOB),
-    
+    is.na(combined$Age) & !is.na(combined$DOB),
     calculated_age,
-    
     combined$Age
-    
   )
   
-  
-  # Remove completely empty records
-  
+  # Remove records without an animal ID
   combined <- combined %>%
-    
     dplyr::filter(
-      
-      !(
-        is.na(Animal_ID) | Animal_ID == "") &
-          is.na(Sex) &
-          is.na(DOB) &
-          is.na(Age)
-      )
-      
+      !is.na(Animal_ID),
+      Animal_ID != ""
     )
-)
   
-  
+  # IMPORTANT: return the completed data frame
   return(combined)
   
 }
 
 
-# ============================================================
-# 3. SERVER FUNCTION
-# ============================================================
+# =========================================================
+# MAIN SERVER FUNCTION
+# =========================================================
 
 server <- function(input, output, session) {
   
   
-  # ----------------------------------------------------------
-  # READ EXCEL FILE
-  # ----------------------------------------------------------
+  # =======================================================
+  # READ UPLOADED EXCEL WORKBOOK
+  # =======================================================
   
-  population_data <- reactive({
+  population_data <- shiny::reactive({
     
-    req(input$file)
+    shiny::req(input$file)
     
-    process_workbook(
-      input$file$datapath
+    file_path <- input$file$datapath
+    
+    shiny::req(
+      is.character(file_path),
+      length(file_path) == 1,
+      !is.na(file_path),
+      nzchar(file_path),
+      file.exists(file_path)
+    )
+    
+    tryCatch(
+      
+      process_workbook(file_path),
+      
+      error = function(e) {
+        
+        shiny::showNotification(
+          paste(
+            "Workbook error:",
+            conditionMessage(e)
+          ),
+          type = "error",
+          duration = NULL
+        )
+        
+        NULL
+        
+      }
+      
     )
     
   })
   
   
-  # ----------------------------------------------------------
-  # UPDATE FILTERS
-  # ----------------------------------------------------------
-  
-  observeEvent(population_data(), {
-    
-    data <- population_data()
-    
-    
-    updateSelectInput(
-      session,
-      "sheet_filter",
-      
-      choices = c(
-        "All",
-        sort(unique(data$Source_Sheet))
-      ),
-      
-      selected = "All"
-    )
-    
-    
-    updateSelectInput(
-      session,
-      "sex_filter",
-      
-      choices = c(
-        "All",
-        sort(unique(data$Sex))
-      ),
-      
-      selected = "All"
-    )
-    
-    
-    updateSelectInput(
-      session,
-      "age_class_filter",
-      
-      choices = c(
-        "All",
-        sort(unique(data$Age_Class))
-      ),
-      
-      selected = "All"
-    )
-    
-    
-    updateSelectInput(
-      session,
-      "age_category_filter",
-      
-      choices = c(
-        "All",
-        sort(unique(data$Age_Category))
-      ),
-      
-      selected = "All"
-    )
-    
-  })
-  
-  
-  # ----------------------------------------------------------
+  # =======================================================
   # FILTER POPULATION DATA
-  # ----------------------------------------------------------
+  # =======================================================
   
-  filtered_data <- reactive({
+  filtered_data <- shiny::reactive({
     
     data <- population_data()
     
+    shiny::req(!is.null(data))
     
     if (!is.null(input$sheet_filter) &&
-        input$sheet_filter != "All") {
+        input$sheet_filter != "All Worksheets") {
       
       data <- data %>%
-        
-        filter(
+        dplyr::filter(
           Source_Sheet == input$sheet_filter
         )
       
     }
     
-    
     if (!is.null(input$sex_filter) &&
         input$sex_filter != "All") {
       
       data <- data %>%
-        
-        filter(
+        dplyr::filter(
           Sex == input$sex_filter
         )
       
     }
     
-    
     if (!is.null(input$age_class_filter) &&
         input$age_class_filter != "All") {
       
       data <- data %>%
-        
-        filter(
+        dplyr::filter(
           Age_Class == input$age_class_filter
         )
       
     }
     
-    
     if (!is.null(input$age_category_filter) &&
         input$age_category_filter != "All") {
       
       data <- data %>%
-        
-        filter(
+        dplyr::filter(
           Age_Category == input$age_category_filter
         )
       
     }
     
-    
-    return(data)
+    data
     
   })
   
   
-  # ==========================================================
-  # 4. POPULATION SUMMARY CARDS
-  # ==========================================================
+  # =======================================================
+  # UPDATE FILTER OPTIONS AFTER UPLOAD
+  # =======================================================
+  
+  observe({
+    
+    data <- population_data()
+    
+    shiny::req(!is.null(data))
+    
+    updateSelectInput(
+      session,
+      "sheet_filter",
+      choices = c(
+        "All Worksheets",
+        sort(unique(data$Source_Sheet))
+      ),
+      selected = "All Worksheets"
+    )
+    
+    updateSelectInput(
+      session,
+      "sex_filter",
+      choices = c(
+        "All",
+        "Male",
+        "Female",
+        "Unknown"
+      ),
+      selected = "All"
+    )
+    
+    updateSelectInput(
+      session,
+      "age_class_filter",
+      choices = c(
+        "All",
+        sort(unique(data$Age_Class))
+      ),
+      selected = "All"
+    )
+    
+    updateSelectInput(
+      session,
+      "age_category_filter",
+      choices = c(
+        "All",
+        sort(unique(data$Age_Category))
+      ),
+      selected = "All"
+    )
+    
+  })
+  
+  
+  # =======================================================
+  # PAGE 1: POPULATION OVERVIEW
+  # =======================================================
   
   output$total_population <- renderValueBox({
     
     data <- filtered_data()
     
     valueBox(
-      
-      value = nrow(data),
-      
-      subtitle = "Total Population",
-      
+      nrow(data),
+      "Total Population",
       icon = icon("paw"),
-      
       color = "green"
-      
     )
     
   })
@@ -546,18 +525,10 @@ server <- function(input, output, session) {
     data <- filtered_data()
     
     valueBox(
-      
-      value = sum(
-        data$Sex == "Male",
-        na.rm = TRUE
-      ),
-      
-      subtitle = "Male Population",
-      
+      sum(data$Sex == "Male", na.rm = TRUE),
+      "Male Population",
       icon = icon("mars"),
-      
-      color = "olive"
-      
+      color = "blue"
     )
     
   })
@@ -568,18 +539,10 @@ server <- function(input, output, session) {
     data <- filtered_data()
     
     valueBox(
-      
-      value = sum(
-        data$Sex == "Female",
-        na.rm = TRUE
-      ),
-      
-      subtitle = "Female Population",
-      
+      sum(data$Sex == "Female", na.rm = TRUE),
+      "Female Population",
       icon = icon("venus"),
-      
-      color = "teal"
-      
+      color = "purple"
     )
     
   })
@@ -590,61 +553,36 @@ server <- function(input, output, session) {
     data <- filtered_data()
     
     valueBox(
-      
-      value = sum(
-        data$Sex == "Unknown",
-        na.rm = TRUE
-      ),
-      
-      subtitle = "Unknown Sex",
-      
+      sum(data$Sex == "Unknown", na.rm = TRUE),
+      "Unknown Sex",
       icon = icon("question-circle"),
-      
       color = "yellow"
-      
     )
     
   })
   
   
-  # ==========================================================
-  # 5. POPULATION OVERVIEW CHARTS
-  # ==========================================================
-  
-  
-  # SEX DISTRIBUTION
+  # =======================================================
+  # POPULATION BY SEX
+  # =======================================================
   
   output$sex_plot <- renderPlot({
     
     data <- filtered_data()
     
     plot_data <- data %>%
-      count(Sex)
+      dplyr::count(Sex)
     
     ggplot(
       plot_data,
-      aes(
-        x = Sex,
-        y = n,
-        fill = Sex
-      )
+      aes(x = Sex, y = n, fill = Sex)
     ) +
       
-      geom_col(width = 0.65) +
+      geom_col() +
       
       geom_text(
         aes(label = n),
-        vjust = -0.5,
-        size = 5
-      ) +
-      
-      scale_fill_manual(
-        values = c(
-          "Male" = "#397D54",
-          "Female" = "#91B96E",
-          "Unknown" = "#B9B9B9"
-        ),
-        na.value = "#B9B9B9"
+        vjust = -0.5
       ) +
       
       labs(
@@ -652,44 +590,25 @@ server <- function(input, output, session) {
         y = "Number of Animals"
       ) +
       
-      theme_minimal() +
-      
-      theme(
-        legend.position = "none"
-      )
+      theme_minimal()
     
   })
   
   
-  # AGE CLASS DISTRIBUTION
+  # =======================================================
+  # POPULATION BY AGE CLASS
+  # =======================================================
   
   output$age_class_plot <- renderPlot({
     
     data <- filtered_data()
     
-    plot_data <- data %>%
-      count(Age_Class) %>%
-      arrange(n)
-    
     ggplot(
-      plot_data,
-      aes(
-        x = reorder(Age_Class, n),
-        y = n
-      )
+      data,
+      aes(x = Age_Class, fill = Age_Class)
     ) +
       
-      geom_col(
-        fill = "#438653",
-        width = 0.7
-      ) +
-      
-      coord_flip() +
-      
-      geom_text(
-        aes(label = n),
-        hjust = -0.3
-      ) +
+      geom_bar() +
       
       labs(
         x = "Age Class",
@@ -701,28 +620,20 @@ server <- function(input, output, session) {
   })
   
   
-  # AGE CATEGORY DISTRIBUTION
+  # =======================================================
+  # POPULATION BY AGE CATEGORY
+  # =======================================================
   
   output$age_category_plot <- renderPlot({
     
     data <- filtered_data()
     
-    plot_data <- data %>%
-      count(Age_Category)
-    
     ggplot(
-      plot_data,
-      aes(
-        x = reorder(Age_Category, n),
-        y = n
-      )
+      data,
+      aes(x = Age_Category, fill = Age_Category)
     ) +
       
-      geom_col(
-        fill = "#78A65A"
-      ) +
-      
-      coord_flip() +
+      geom_bar() +
       
       labs(
         x = "Age Category",
@@ -734,128 +645,75 @@ server <- function(input, output, session) {
   })
   
   
-  # NOTCH IDENTIFICATION
+  # =======================================================
+  # NOTCH STATUS
+  # =======================================================
   
   output$notch_plot <- renderPlot({
     
     data <- filtered_data()
     
-    plot_data <- data %>%
-      count(Notch_Status)
-    
     ggplot(
-      plot_data,
-      aes(
-        x = Notch_Status,
-        y = n,
-        fill = Notch_Status
-      )
+      data,
+      aes(x = Notch_Status, fill = Notch_Status)
     ) +
       
-      geom_col() +
-      
-      geom_text(
-        aes(label = n),
-        vjust = -0.4
-      ) +
-      
-      scale_fill_manual(
-        values = c(
-          "Notched" = "#397D54",
-          "No Notch" = "#91B96E",
-          "Not Recorded" = "#B9B9B9"
-        )
-      ) +
+      geom_bar() +
       
       labs(
         x = "Notch Status",
         y = "Number of Animals"
       ) +
       
-      theme_minimal() +
-      
-      theme(
-        legend.position = "none"
-      )
+      theme_minimal()
     
   })
   
   
-  # ==========================================================
-  # 6. POPULATION DEMOGRAPHICS
-  # ==========================================================
+  # =======================================================
+  # PAGE 2: POPULATION DEMOGRAPHICS
+  # =======================================================
   
-  
-  # SEX DISTRIBUTION PIE CHART
-  
-  output$sex_detail_plot <- renderPlot({
+  output$demographic_sex_plot <- renderPlot({
     
     data <- filtered_data()
     
-    plot_data <- data %>%
-      count(Sex)
-    
     ggplot(
-      plot_data,
-      aes(
-        x = "",
-        y = n,
-        fill = Sex
-      )
+      data,
+      aes(x = Sex, fill = Sex)
     ) +
       
-      geom_col(
-        width = 1,
-        color = "white"
-      ) +
-      
-      coord_polar("y") +
+      geom_bar() +
       
       labs(
-        x = NULL,
-        y = NULL,
-        fill = "Sex"
+        x = "Sex",
+        y = "Population"
       ) +
       
-      theme_void()
+      theme_minimal()
     
   })
   
-  
-  # SEX BY AGE CLASS
   
   output$sex_age_plot <- renderPlot({
     
     data <- filtered_data()
     
-    plot_data <- data %>%
-      count(Age_Class, Sex)
-    
     ggplot(
-      plot_data,
+      data,
       aes(
         x = Age_Class,
-        y = n,
         fill = Sex
       )
     ) +
       
-      geom_col(
+      geom_bar(
         position = "dodge"
-      ) +
-      
-      scale_fill_manual(
-        values = c(
-          "Male" = "#397D54",
-          "Female" = "#91B96E",
-          "Unknown" = "#B9B9B9"
-        ),
-        na.value = "#B9B9B9"
       ) +
       
       labs(
         x = "Age Class",
-        y = "Number of Animals"
+        y = "Population"
       ) +
       
       theme_minimal()
@@ -863,31 +721,25 @@ server <- function(input, output, session) {
   })
   
   
-  # AGE CATEGORY BY SEX
-  
-  output$category_detail_plot <- renderPlot({
+  output$category_sex_plot <- renderPlot({
     
     data <- filtered_data()
     
-    plot_data <- data %>%
-      count(Age_Category, Sex)
-    
     ggplot(
-      plot_data,
+      data,
       aes(
         x = Age_Category,
-        y = n,
         fill = Sex
       )
     ) +
       
-      geom_col(
+      geom_bar(
         position = "dodge"
       ) +
       
       labs(
         x = "Age Category",
-        y = "Number of Animals"
+        y = "Population"
       ) +
       
       theme_minimal()
@@ -895,33 +747,32 @@ server <- function(input, output, session) {
   })
   
   
-  # ==========================================================
-  # 7. AGE ANALYSIS SUMMARY CARDS
-  # ==========================================================
-  
+  # =======================================================
+  # PAGE 3: AGE ANALYSIS
+  # =======================================================
   
   output$average_age <- renderValueBox({
     
     data <- filtered_data()
     
-    age <- data$Age[
-      !is.na(data$Age)
-    ]
+    age <- mean(
+      data$Age,
+      na.rm = TRUE
+    )
+    
+    if (is.nan(age)) {
+      age <- NA_real_
+    }
     
     valueBox(
-      
-      value = if (length(age) == 0) {
-        "N/A"
-      } else {
-        round(mean(age), 1)
-      },
-      
-      subtitle = "Average Age (Years)",
-      
+      ifelse(
+        is.na(age),
+        "N/A",
+        round(age, 1)
+      ),
+      "Average Age (Years)",
       icon = icon("calculator"),
-      
       color = "green"
-      
     )
     
   })
@@ -931,24 +782,23 @@ server <- function(input, output, session) {
     
     data <- filtered_data()
     
-    age <- data$Age[
-      !is.na(data$Age)
-    ]
+    age <- suppressWarnings(
+      min(data$Age, na.rm = TRUE)
+    )
+    
+    if (is.infinite(age)) {
+      age <- NA_real_
+    }
     
     valueBox(
-      
-      value = if (length(age) == 0) {
-        "N/A"
-      } else {
-        min(age)
-      },
-      
-      subtitle = "Youngest Age (Years)",
-      
-      icon = icon("child"),
-      
-      color = "olive"
-      
+      ifelse(
+        is.na(age),
+        "N/A",
+        age
+      ),
+      "Youngest Age (Years)",
+      icon = icon("baby"),
+      color = "blue"
     )
     
   })
@@ -958,44 +808,38 @@ server <- function(input, output, session) {
     
     data <- filtered_data()
     
-    age <- data$Age[
-      !is.na(data$Age)
-    ]
+    age <- suppressWarnings(
+      max(data$Age, na.rm = TRUE)
+    )
+    
+    if (is.infinite(age)) {
+      age <- NA_real_
+    }
     
     valueBox(
-      
-      value = if (length(age) == 0) {
-        "N/A"
-      } else {
-        max(age)
-      },
-      
-      subtitle = "Oldest Age (Years)",
-      
+      ifelse(
+        is.na(age),
+        "N/A",
+        age
+      ),
+      "Oldest Age (Years)",
       icon = icon("paw"),
-      
-      color = "teal"
-      
+      color = "purple"
     )
     
   })
   
   
-  # ==========================================================
-  # 8. AGE DISTRIBUTION
-  # ==========================================================
+  # =======================================================
+  # AGE DISTRIBUTION
+  # =======================================================
   
-  output$age_distribution <- renderPlot({
+  output$age_histogram <- renderPlot({
     
     data <- filtered_data() %>%
-      filter(!is.na(Age))
-    
-    validate(
-      need(
-        nrow(data) > 0,
-        "No age information available."
+      dplyr::filter(
+        !is.na(Age)
       )
-    )
     
     ggplot(
       data,
@@ -1004,8 +848,8 @@ server <- function(input, output, session) {
       
       geom_histogram(
         binwidth = 1,
-        fill = "#438653",
-        color = "white"
+        fill = "forestgreen",
+        colour = "white"
       ) +
       
       labs(
@@ -1018,28 +862,20 @@ server <- function(input, output, session) {
   })
   
   
-  # ==========================================================
-  # 9. BIRTH YEAR ANALYSIS
-  # ==========================================================
+  # =======================================================
+  # BIRTHS BY YEAR
+  # =======================================================
   
   output$birth_year_plot <- renderPlot({
     
     data <- filtered_data() %>%
-      
-      filter(!is.na(DOB)) %>%
-      
-      mutate(
+      dplyr::filter(
+        !is.na(DOB)
+      ) %>%
+      dplyr::mutate(
         Birth_Year = lubridate::year(DOB)
       ) %>%
-      
-      count(Birth_Year)
-    
-    validate(
-      need(
-        nrow(data) > 0,
-        "No birth date information available."
-      )
-    )
+      dplyr::count(Birth_Year)
     
     ggplot(
       data,
@@ -1050,17 +886,12 @@ server <- function(input, output, session) {
     ) +
       
       geom_col(
-        fill = "#438653"
-      ) +
-      
-      geom_line(
-        color = "#285B3B",
-        linewidth = 1
+        fill = "forestgreen"
       ) +
       
       labs(
         x = "Birth Year",
-        y = "Number of Animals Born"
+        y = "Number of Animals"
       ) +
       
       theme_minimal()
@@ -1068,63 +899,34 @@ server <- function(input, output, session) {
   })
   
   
-  # ==========================================================
-  # 10. ANIMAL REGISTER
-  # ==========================================================
+  # =======================================================
+  # PAGE 4: ANIMAL REGISTER
+  # =======================================================
   
-  output$animal_table <- DT:renderDT({
+  output$animal_table <- DT::renderDT({
     
-    data <- filtered_data() %>%
-      
-        dplyr::select(
-        ID/Name,
-        Sex,
-        Notch,
-        Date_of_Birth ,
-        Age(years),
-        Age_Class,
-        Age_Category,
-        Source_Sheet
-      )
-    
-    names(data) <- c(
-      "ID/Name",
-      "Sex",
-      "Notch",
-      "Date_of_Birth",
-      "Age(years)",
-      "Age_Class",
-      "Age_Category",
-      "Source_Sheet"
-    )
+    data <- filtered_data()
     
     DT::datatable(
       
       data,
-      extensions = "Buttons",
+      
       options = list(
         pageLength = 10,
         scrollX = TRUE,
-        dom = "Bfrtip",
-        buttons = c(
-          "copy",
-          "csv",
-          "excel"
-        )
+        autoWidth = TRUE
       ),
       
-      rownames = FALSE,
-      
-      filter = "top"
+      rownames = FALSE
       
     )
     
   })
   
   
-  # ==========================================================
-  # 11. DOWNLOAD POPULATION DATA
-  # ==========================================================
+  # =======================================================
+  # DOWNLOAD FILTERED DATA
+  # =======================================================
   
   output$download_data <- downloadHandler(
     
@@ -1141,13 +943,9 @@ server <- function(input, output, session) {
     content = function(file) {
       
       write.csv(
-        
         filtered_data(),
-        
         file,
-        
         row.names = FALSE
-        
       )
       
     }

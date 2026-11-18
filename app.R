@@ -1,21 +1,33 @@
-#
-# This is a Shiny web application. You can run the application by clicking
-# the 'Run App' button above.
-#
-# Find out more about building applications with Shiny here:
-#
-#    https://shiny.posit.co/
-#
 
-library(shiny)
 
-# ============================================================
-# WILDLIFE POPULATION OVERVIEW
-# MAIN APPLICATION FILE
-# ============================================================
+# =========================================================
+# WILDLIFE POPULATION DEMOGRAPHIC DASHBOARD
+# MAIN APPLICATION
+# =========================================================
 
-# Load required packages
+# Install packages if not already installed
+packages <- c(
+  "shiny",
+  "shinydashboard",
+  "readxl",
+  "dplyr",
+  "tidyr",
+  "ggplot2",
+  "DT",
+  "stringr",
+  "lubridate",
+  "scales"
+)
 
+installed <- rownames(installed.packages())
+
+for (package in packages) {
+  if (!package %in% installed) {
+    install.packages(package)
+  }
+}
+
+# Load libraries
 library(shiny)
 library(shinydashboard)
 library(readxl)
@@ -28,12 +40,10 @@ library(lubridate)
 library(scales)
 
 # Load UI and Server
+source("ui.R", local = TRUE)
+source("server.R", local = TRUE)
 
-source("ui.R")
-source("server.R")
-
-# Launch application
-
+# Run application
 shinyApp(
   ui = ui,
   server = server

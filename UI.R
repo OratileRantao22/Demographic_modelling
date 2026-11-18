@@ -1,24 +1,21 @@
 
-# ============================================================
-# WILDLIFE POPULATION OVERVIEW
+# =========================================================
+# WILDLIFE POPULATION DEMOGRAPHIC DASHBOARD
 # USER INTERFACE
-# ============================================================
-
+# =========================================================
 
 ui <- dashboardPage(
   
   skin = "green",
   
-  # HEADER
   dashboardHeader(
-    title = "Population Overview",
-    titleWidth = 280
+    title = "Wildlife Population Dashboard",
+    titleWidth = 300
   ),
   
-  # SIDEBAR
   dashboardSidebar(
     
-    width = 280,
+    width = 300,
     
     sidebarMenu(
       
@@ -37,7 +34,7 @@ ui <- dashboardPage(
       menuItem(
         "Age Analysis",
         tabName = "age",
-        icon = icon("chart-bar")
+        icon = icon("chart-line")
       ),
       
       menuItem(
@@ -50,97 +47,95 @@ ui <- dashboardPage(
     
     br(),
     
-    # EXCEL FILE UPLOAD
-    
+    # Excel upload
     fileInput(
       "file",
-      "Upload Excel Population File",
+      "Upload Excel Workbook",
       accept = c(".xlsx", ".xls")
+    ),
+    
+    helpText(
+      "Upload an Excel workbook containing five worksheets."
     ),
     
     hr(),
     
-    h4("Population Filters"),
-    
+    # Filters
     selectInput(
       "sheet_filter",
-      "Source Worksheet",
-      choices = "All"
+      "Select Worksheet:",
+      choices = "All Worksheets",
+      selected = "All Worksheets"
     ),
     
     selectInput(
       "sex_filter",
-      "Sex",
-      choices = "All"
+      "Filter by Sex:",
+      choices = c("All", "Male", "Female", "Unknown"),
+      selected = "All"
     ),
     
     selectInput(
       "age_class_filter",
-      "Age Class",
-      choices = "All"
+      "Filter by Age Class:",
+      choices = "All",
+      selected = "All"
     ),
     
     selectInput(
       "age_category_filter",
-      "Age Category",
-      choices = "All"
+      "Filter by Age Category:",
+      choices = "All",
+      selected = "All"
     )
     
   ),
   
-  # MAIN DASHBOARD BODY
-  
   dashboardBody(
-    
-    # CUSTOM GREEN THEME
     
     tags$head(
       
       tags$style(HTML("
-
         .content-wrapper, .right-side {
-          background-color: #f4f7f2;
+          background-color: #f4f8f3;
         }
 
-        .skin-green .main-header .logo {
-          background-color: #285b3b;
-          color: white;
+        .main-header .logo {
           font-weight: bold;
         }
 
-        .skin-green .main-header .navbar {
-          background-color: #36784b;
-        }
-
-        .skin-green .main-sidebar {
-          background-color: #203d2b;
-        }
-
         .box {
-          border-top: 3px solid #438653;
+          border-top: 3px solid #4CAF50;
         }
 
         .small-box {
-          border-radius: 6px;
+          border-radius: 8px;
         }
 
-        .content {
-          padding: 20px;
+        .skin-green .main-sidebar {
+          background-color: #174d32;
         }
 
+        .skin-green .sidebar-menu > li.active > a {
+          background-color: #2e8b57;
+        }
+
+        .skin-green .main-header .logo {
+          background-color: #174d32;
+        }
+
+        .skin-green .main-header .navbar {
+          background-color: #2e8b57;
+        }
       "))
       
     ),
     
-    # ========================================================
-    # DASHBOARD PAGES
-    # ========================================================
-    
     tabItems(
       
-      # ------------------------------------------------------
+      # ===================================================
       # PAGE 1: POPULATION OVERVIEW
-      # ------------------------------------------------------
+      # ===================================================
       
       tabItem(
         
@@ -148,24 +143,29 @@ ui <- dashboardPage(
         
         fluidRow(
           
-          valueBoxOutput(
-            "total_population",
-            width = 3
+          valueBoxOutput("total_population", width = 3),
+          valueBoxOutput("male_population", width = 3),
+          valueBoxOutput("female_population", width = 3),
+          valueBoxOutput("unknown_population", width = 3)
+          
+        ),
+        
+        fluidRow(
+          
+          box(
+            title = "Population by Sex",
+            status = "success",
+            solidHeader = TRUE,
+            width = 6,
+            plotOutput("sex_plot")
           ),
           
-          valueBoxOutput(
-            "male_population",
-            width = 3
-          ),
-          
-          valueBoxOutput(
-            "female_population",
-            width = 3
-          ),
-          
-          valueBoxOutput(
-            "unknown_population",
-            width = 3
+          box(
+            title = "Population by Age Class",
+            status = "success",
+            solidHeader = TRUE,
+            width = 6,
+            plotOutput("age_class_plot")
           )
           
         ),
@@ -173,64 +173,28 @@ ui <- dashboardPage(
         fluidRow(
           
           box(
-            title = "Sex Distribution",
+            title = "Population by Age Category",
             status = "success",
             solidHeader = TRUE,
             width = 6,
-            
-            plotOutput(
-              "sex_plot",
-              height = 300
-            )
+            plotOutput("age_category_plot")
           ),
           
           box(
-            title = "Age Class Distribution",
+            title = "Notch Status",
             status = "success",
             solidHeader = TRUE,
             width = 6,
-            
-            plotOutput(
-              "age_class_plot",
-              height = 300
-            )
-          )
-          
-        ),
-        
-        fluidRow(
-          
-          box(
-            title = "Age Category Distribution",
-            status = "success",
-            solidHeader = TRUE,
-            width = 6,
-            
-            plotOutput(
-              "age_category_plot",
-              height = 300
-            )
-          ),
-          
-          box(
-            title = "Notch Identification",
-            status = "success",
-            solidHeader = TRUE,
-            width = 6,
-            
-            plotOutput(
-              "notch_plot",
-              height = 300
-            )
+            plotOutput("notch_plot")
           )
           
         )
         
       ),
       
-      # ------------------------------------------------------
+      # ===================================================
       # PAGE 2: POPULATION DEMOGRAPHICS
-      # ------------------------------------------------------
+      # ===================================================
       
       tabItem(
         
@@ -242,24 +206,8 @@ ui <- dashboardPage(
             title = "Population by Sex",
             status = "success",
             solidHeader = TRUE,
-            width = 6,
-            
-            plotOutput(
-              "sex_detail_plot",
-              height = 350
-            )
-          ),
-          
-          box(
-            title = "Sex Distribution Across Age Classes",
-            status = "success",
-            solidHeader = TRUE,
-            width = 6,
-            
-            plotOutput(
-              "sex_age_plot",
-              height = 350
-            )
+            width = 12,
+            plotOutput("demographic_sex_plot")
           )
           
         ),
@@ -267,24 +215,28 @@ ui <- dashboardPage(
         fluidRow(
           
           box(
-            title = "Population by Age Category",
+            title = "Sex Distribution Across Age Classes",
             status = "success",
             solidHeader = TRUE,
-            width = 12,
-            
-            plotOutput(
-              "category_detail_plot",
-              height = 350
-            )
+            width = 6,
+            plotOutput("sex_age_plot")
+          ),
+          
+          box(
+            title = "Age Category by Sex",
+            status = "success",
+            solidHeader = TRUE,
+            width = 6,
+            plotOutput("category_sex_plot")
           )
           
         )
         
       ),
       
-      # ------------------------------------------------------
+      # ===================================================
       # PAGE 3: AGE ANALYSIS
-      # ------------------------------------------------------
+      # ===================================================
       
       tabItem(
         
@@ -292,20 +244,9 @@ ui <- dashboardPage(
         
         fluidRow(
           
-          valueBoxOutput(
-            "average_age",
-            width = 4
-          ),
-          
-          valueBoxOutput(
-            "youngest_age",
-            width = 4
-          ),
-          
-          valueBoxOutput(
-            "oldest_age",
-            width = 4
-          )
+          valueBoxOutput("average_age", width = 4),
+          valueBoxOutput("youngest_age", width = 4),
+          valueBoxOutput("oldest_age", width = 4)
           
         ),
         
@@ -316,11 +257,7 @@ ui <- dashboardPage(
             status = "success",
             solidHeader = TRUE,
             width = 6,
-            
-            plotOutput(
-              "age_distribution",
-              height = 350
-            )
+            plotOutput("age_histogram")
           ),
           
           box(
@@ -328,20 +265,16 @@ ui <- dashboardPage(
             status = "success",
             solidHeader = TRUE,
             width = 6,
-            
-            plotOutput(
-              "birth_year_plot",
-              height = 350
-            )
+            plotOutput("birth_year_plot")
           )
           
         )
         
       ),
       
-      # ------------------------------------------------------
+      # ===================================================
       # PAGE 4: ANIMAL REGISTER
-      # ------------------------------------------------------
+      # ===================================================
       
       tabItem(
         
@@ -350,14 +283,14 @@ ui <- dashboardPage(
         fluidRow(
           
           box(
-            title = "Wildlife Population Register",
+            title = "Wildlife Animal Register",
             status = "success",
             solidHeader = TRUE,
             width = 12,
             
             downloadButton(
               "download_data",
-              "Download Population Data"
+              "Download CSV"
             ),
             
             br(),
@@ -376,3 +309,4 @@ ui <- dashboardPage(
   )
   
 )
+
