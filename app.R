@@ -1,11 +1,9 @@
 
-
 # =========================================================
 # WILDLIFE POPULATION DEMOGRAPHIC DASHBOARD
 # MAIN APPLICATION
 # =========================================================
 
-# Install packages if not already installed
 packages <- c(
   "shiny",
   "shinydashboard",
@@ -27,7 +25,6 @@ for (package in packages) {
   }
 }
 
-# Load libraries
 library(shiny)
 library(shinydashboard)
 library(readxl)
@@ -48,3 +45,4 @@ shinyApp(
   ui = ui,
   server = server
 )
+

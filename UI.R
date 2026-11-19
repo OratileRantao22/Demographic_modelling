@@ -47,7 +47,6 @@ ui <- dashboardPage(
     
     br(),
     
-    # Excel upload
     fileInput(
       "file",
       "Upload Excel Workbook",
@@ -55,15 +54,14 @@ ui <- dashboardPage(
     ),
     
     helpText(
-      "Upload an Excel workbook containing five worksheets."
+      "Upload your wildlife population workbook. The dashboard will identify worksheets containing individual animal records."
     ),
     
     hr(),
     
-    # Filters
     selectInput(
       "sheet_filter",
-      "Select Worksheet:",
+      "Select Animal Data Worksheet:",
       choices = "All Worksheets",
       selected = "All Worksheets"
     ),
@@ -71,7 +69,7 @@ ui <- dashboardPage(
     selectInput(
       "sex_filter",
       "Filter by Sex:",
-      choices = c("All", "Male", "Female", "Unknown"),
+      choices = c("All", "Male", "Female", "Unclassified", "Unknown"),
       selected = "All"
     ),
     
@@ -309,4 +307,3 @@ ui <- dashboardPage(
   )
   
 )
-
