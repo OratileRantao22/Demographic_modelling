@@ -1,918 +1,1379 @@
+# ============================================================
+# WILDLIFE POPULATION DEMOGRAPHIC DASHBOARD
+# SERVER.R - SERVER FUNCTIONS
+# ============================================================
 
 library(shiny)
 library(shinydashboard)
-library(DT)
-library(ggplot2)
-library(dplyr)
-library(scales)
 library(readxl)
+library(DT)
+library(dplyr)
+library(ggplot2)
+
+# ============================================================
+# 1. EMPTY ANIMAL REGISTER
+# ============================================================
+
+empty_register <- data.frame(
+  
+  Animal_ID = character(),
+  Sex = character(),
+  Notch_Number = character(),
+  Date_of_Birth = as.Date(character()),
+  Age = numeric(),
+  Age_Class = character(),
+  Age_Category = character(),
+  
+  stringsAsFactors = FALSE
+  
+)
 
 
-# =========================================================
-# HELPER FUNCTIONS
-# =========================================================
+# ============================================================
+# 2. HELPER FUNCTIONS
+# ============================================================
 
-# Safely convert values to numeric
-safe_numeric <- function(x) {
-  if (is.null(x) || length(x) == 0 || is.na(x[1]) ||
-      identical(trimws(as.character(x[1])), "")) {
-    return(NA_real_)
+# ------------------------------------------------------------
+# STANDARDISE COLUMN HEADINGS
+# ------------------------------------------------------------
+
+normalise_header <- function(x) {
+  
+  if (is.null(x) || length(x) == 0 || is.na(x)) {
+    return("")
   }
   
-  suppressWarnings(
-    as.numeric(gsub(",", "", as.character(x[1])))
-  )
+  x <- tolower(trimws(as.character(x)))
+  
+  gsub("[^a-z0-9]", "", x)
+  
 }
 
 
-# Safely convert values to Date
+# ------------------------------------------------------------
+# SAFELY CONVERT VALUES TO TEXT
+# ------------------------------------------------------------
+
+safe_text <- function(x) {
+  
+  if (is.null(x) || length(x) == 0 || is.na(x)) {
+    return(NA_character_)
+  }
+  
+  result <- trimws(as.character(x))
+  
+  if (result == "") {
+    return(NA_character_)
+  }
+  
+  result
+  
+}
+
+
+# ------------------------------------------------------------
+# CONVERT AGE TO NUMERIC
+# ------------------------------------------------------------
+
+safe_numeric <- function(x) {
+  
+  if (is.null(x) || length(x) == 0 || is.na(x)) {
+    return(NA_real_)
+  }
+  
+  x <- gsub(",", "", as.character(x))
+  
+  x <- gsub("[^0-9.-]", "", x)
+  
+  result <- suppressWarnings(as.numeric(x))
+  
+  if (length(result) == 0 || !is.finite(result)) {
+    return(NA_real_)
+  }
+  
+  result
+  
+}
+
+
+# ------------------------------------------------------------
+# CONVERT EXCEL DATES
+# ------------------------------------------------------------
+
 safe_date <- function(x) {
-  if (is.null(x) || length(x) == 0 || is.na(x[1])) {
+  
+  if (is.null(x) || length(x) == 0 || is.na(x)) {
     return(as.Date(NA))
   }
   
   if (inherits(x, "Date")) {
-    return(as.Date(x[1]))
+    return(as.Date(x))
   }
   
   if (inherits(x, "POSIXt")) {
-    return(as.Date(x[1]))
+    return(as.Date(x))
   }
   
-  suppressWarnings(as.Date(x[1]))
+  # Excel numeric date values
+  
+  if (is.numeric(x)) {
+    
+    if (x > 0) {
+      return(as.Date(x, origin = "1899-12-30"))
+    }
+    
+    return(as.Date(NA))
+  }
+  
+  x <- trimws(as.character(x))
+  
+  if (x == "") {
+    return(as.Date(NA))
+  }
+  
+  formats <- c(
+    "%Y-%m-%d",
+    "%d/%m/%Y",
+    "%m/%d/%Y",
+    "%d-%m-%Y",
+    "%Y/%m/%d",
+    "%d %b %Y",
+    "%d %B %Y"
+  )
+  
+  for (format in formats) {
+    
+    result <- suppressWarnings(
+      as.Date(x, format = format)
+    )
+    
+    if (!is.na(result)) {
+      return(result)
+    }
+    
+  }
+  
+  as.Date(NA)
+  
 }
 
 
-# Standardise sex values
-standardise_sex <- function(x) {
-  x <- trimws(tolower(as.character(x)))
+# ------------------------------------------------------------
+# STANDARDISE SEX VALUES
+# ------------------------------------------------------------
+
+normalise_sex <- function(x) {
+  
+  x <- tolower(trimws(as.character(x)))
   
   if (is.na(x) || x == "") {
     return("Unknown")
   }
   
-  if (x %in% c("m", "male")) {
+  if (x %in% c("m", "male", "bull", "boy")) {
     return("Male")
   }
   
-  if (x %in% c("f", "female")) {
+  if (x %in% c("f", "female", "cow", "girl")) {
     return("Female")
   }
   
-  if (x %in% c("unclassified", "unclass", "u")) {
-    return("Unclassified")
-  }
-  
   "Unknown"
+  
 }
 
 
-# Calculate age from date of birth
-calculate_age <- function(dob) {
-  if (is.na(dob)) {
-    return(NA_real_)
+# ============================================================
+# 3. FIND ANIMAL REGISTER HEADINGS
+# ============================================================
+
+find_register_header <- function(sheet_data) {
+  
+  if (nrow(sheet_data) == 0 || ncol(sheet_data) == 0) {
+    return(NULL)
   }
   
-  as.numeric(
-    difftime(Sys.Date(), dob, units = "days")
-  ) / 365.25
-}
-
-
-# Derive age class using the age ranges previously specified
-derive_age_class <- function(age) {
-  if (is.na(age)) {
-    return("Unknown")
+  max_rows <- min(nrow(sheet_data), 50)
+  
+  for (r in seq_len(max_rows)) {
+    
+    headings <- vapply(
+      
+      seq_len(ncol(sheet_data)),
+      
+      function(j) {
+        normalise_header(sheet_data[[j]][[r]])
+      },
+      
+      character(1)
+      
+    )
+    
+    # Recognised ID headings
+    
+    id_aliases <- c(
+      "id",
+      "idname",
+      "animalid",
+      "animalname",
+      "individualid",
+      "name"
+    )
+    
+    # Recognised sex headings
+    
+    sex_aliases <- c(
+      "sex",
+      "gender"
+    )
+    
+    # Recognised date of birth headings
+    
+    dob_aliases <- c(
+      "dateofbirth",
+      "dob",
+      "birthdate"
+    )
+    
+    # Recognised age headings
+    
+    age_aliases <- c(
+      "age",
+      "ageyears",
+      "ageinyears"
+    )
+    
+    id_col <- which(headings %in% id_aliases)
+    
+    sex_col <- which(headings %in% sex_aliases)
+    
+    dob_col <- which(headings %in% dob_aliases)
+    
+    age_col <- which(headings %in% age_aliases)
+    
+    if (
+      
+      length(id_col) > 0 &&
+      length(sex_col) > 0 &&
+      (length(dob_col) > 0 || length(age_col) > 0)
+      
+    ) {
+      
+      return(list(
+        
+        header_row = r,
+        
+        id_col = id_col[1],
+        
+        sex_col = sex_col[1],
+        
+        dob_col = if (length(dob_col) > 0) dob_col[1] else NA_integer_,
+        
+        age_col = if (length(age_col) > 0) age_col[1] else NA_integer_,
+        
+        headings = headings
+        
+      ))
+      
+    }
+    
   }
   
-  if (age < 0.25) {
-    return("A")
-  } else if (age >= 0.25 && age < 1) {
-    return("B")
-  } else if (age >= 1 && age < 2) {
-    return("C")
-  } else if (age >= 2 && age < 3.5) {
-    return("D")
-  } else if (age >= 3.5 && age <= 6.9) {
-    return("E")
-  } else if (age > 7) {
-    return("F")
+  NULL
+  
+}
+
+
+# ============================================================
+# 4. EXTRACT ANIMAL RECORDS FROM A WORKSHEET
+# ============================================================
+
+extract_sheet_animals <- function(sheet_data) {
+  
+  header_info <- find_register_header(sheet_data)
+  
+  if (is.null(header_info)) {
+    return(empty_register)
   }
   
-  "Unknown"
+  header_row <- header_info$header_row
+  
+  id_col <- header_info$id_col
+  
+  sex_col <- header_info$sex_col
+  
+  dob_col <- header_info$dob_col
+  
+  age_col <- header_info$age_col
+  
+  headings <- header_info$headings
+  
+  # Find optional columns
+  
+  notch_col <- which(headings %in% c(
+    "notch",
+    "notchnumber",
+    "animalnotch"
+  ))
+  
+  age_class_col <- which(headings %in% c(
+    "ageclass",
+    "class"
+  ))
+  
+  age_category_col <- which(headings %in% c(
+    "agecategory",
+    "category"
+  ))
+  
+  get_value <- function(row, column) {
+    
+    if (is.na(column)) {
+      return(NA)
+    }
+    
+    if (column > ncol(sheet_data)) {
+      return(NA)
+    }
+    
+    sheet_data[[column]][[row]]
+    
+  }
+  
+  if (header_row >= nrow(sheet_data)) {
+    return(empty_register)
+  }
+  
+  records <- list()
+  
+  for (r in seq.int(header_row + 1, nrow(sheet_data))) {
+    
+    animal_id <- safe_text(
+      get_value(r, id_col)
+    )
+    
+    if (is.na(animal_id)) {
+      next
+    }
+    
+    # Exclude common summary rows
+    
+    if (tolower(animal_id) %in% c(
+      "total",
+      "grand total",
+      "subtotal",
+      "male",
+      "female"
+    )) {
+      next
+    }
+    
+    sex_value <- normalise_sex(
+      get_value(r, sex_col)
+    )
+    
+    dob_value <- if (!is.na(dob_col)) {
+      
+      safe_date(get_value(r, dob_col))
+      
+    } else {
+      
+      as.Date(NA)
+      
+    }
+    
+    age_value <- if (!is.na(age_col)) {
+      
+      safe_numeric(get_value(r, age_col))
+      
+    } else {
+      
+      NA_real_
+      
+    }
+    
+    # Calculate age from date of birth if age is unavailable
+    
+    if (
+      is.na(age_value) &&
+      !is.na(dob_value)
+    ) {
+      
+      age_value <- as.numeric(
+        difftime(
+          Sys.Date(),
+          dob_value,
+          units = "days"
+        )
+      ) / 365.25
+      
+    }
+    
+    # Do not include obvious non-animal records
+    
+    records[[length(records) + 1]] <- data.frame(
+      
+      Animal_ID = animal_id,
+      
+      Sex = sex_value,
+      
+      Notch_Number = if (length(notch_col) > 0) {
+        safe_text(get_value(r, notch_col[1]))
+      } else {
+        NA_character_
+      },
+      
+      Date_of_Birth = dob_value,
+      
+      Age = age_value,
+      
+      Age_Class = if (length(age_class_col) > 0) {
+        safe_text(get_value(r, age_class_col[1]))
+      } else {
+        NA_character_
+      },
+      
+      Age_Category = if (length(age_category_col) > 0) {
+        safe_text(get_value(r, age_category_col[1]))
+      } else {
+        NA_character_
+      },
+      
+      stringsAsFactors = FALSE
+      
+    )
+    
+  }
+  
+  if (length(records) == 0) {
+    return(empty_register)
+  }
+  
+  result <- bind_rows(records)
+  
+  result <- result %>%
+    filter(
+      !is.na(Animal_ID),
+      Animal_ID != ""
+    )
+  
+  result
+  
 }
 
 
-# Return an empty plot when no records are available
-empty_plot <- function(message = "No animal records available") {
-  ggplot() +
-    annotate(
-      "text",
-      x = 1,
-      y = 1,
-      label = message,
-      size = 5,
-      colour = "grey40"
-    ) +
-    xlim(0, 2) +
-    ylim(0, 2) +
-    theme_void()
+# ============================================================
+# 5. READ ALL WORKSHEETS FROM THE EXCEL WORKBOOK
+# ============================================================
+
+read_wildlife_workbook <- function(file_path) {
+  
+  sheets <- readxl::excel_sheets(file_path)
+  
+  workbook <- list()
+  
+  for (sheet in sheets) {
+    
+    workbook[[sheet]] <- readxl::read_excel(
+      
+      file_path,
+      
+      sheet = sheet,
+      
+      col_names = FALSE,
+      
+      .name_repair = "minimal"
+      
+    )
+    
+  }
+  
+  workbook
+  
 }
 
 
-# =========================================================
-# SERVER
-# =========================================================
+# ============================================================
+# 6. EXTRACT ANIMALS FROM ALL WORKSHEETS
+# ============================================================
+
+extract_workbook_animals <- function(workbook) {
+  
+  if (length(workbook) == 0) {
+    return(empty_register)
+  }
+  
+  all_records <- list()
+  
+  for (sheet_name in names(workbook)) {
+    
+    sheet_data <- workbook[[sheet_name]]
+    
+    sheet_animals <- extract_sheet_animals(sheet_data)
+    
+    if (nrow(sheet_animals) > 0) {
+      
+      all_records[[length(all_records) + 1]] <- sheet_animals
+      
+    }
+    
+  }
+  
+  if (length(all_records) == 0) {
+    return(empty_register)
+  }
+  
+  bind_rows(all_records) %>%
+    
+    distinct(Animal_ID, .keep_all = TRUE)
+  
+}
+
+
+# ============================================================
+# 7. SERVER
+# ============================================================
 
 server <- function(input, output, session) {
   
-  # =======================================================
-  # 1. CREATE EMPTY ANIMAL REGISTER
-  # =======================================================
   
-  empty_register <- data.frame(
-    Animal_ID = character(),
-    Sex = character(),
-    DOB = as.Date(character()),
-    Age = numeric(),
-    Age_Class = character(),
-    Age_Category = character(),
-    Notch = character(),
-    Notch_Status = character(),
-    Area_Last_Sighted = character(),
-    Date_Last_Sighting = as.Date(character()),
-    Sightings_Last_6_Months = numeric(),
-    Source_Sheet = character(),
-    stringsAsFactors = FALSE
-  )
+  # ==========================================================
+  # A. MANUAL ANIMAL RECORDS
+  # ==========================================================
   
   animal_records <- reactiveVal(empty_register)
   
-  # =======================================================
-  # EXCEL WORKBOOK UPLOAD AND PREVIEW
-  # =======================================================
   
-  # Store worksheet names
-  workbook_sheets <- reactiveVal(character())
+  # ==========================================================
+  # B. READ UPLOADED WORKBOOK
+  # ==========================================================
   
-  
-  # Detect uploaded workbook and retrieve worksheet names
-  observeEvent(input$excel_file, {
+  workbook_data <- reactive({
     
     req(input$excel_file)
     
-    uploaded_file <- input$excel_file$datapath
-    
     tryCatch({
       
-      sheets <- readxl::excel_sheets(uploaded_file)
-      
-      if (length(sheets) == 0) {
-        stop("The workbook does not contain any worksheets.")
-      }
-      
-      workbook_sheets(sheets)
-      
-      updateSelectInput(
-        session,
-        "workbook_sheet",
-        choices = sheets,
-        selected = sheets[1]
-      )
-      
-      showNotification(
-        paste(
-          "Workbook uploaded successfully.",
-          length(sheets),
-          "worksheet(s) found."
-        ),
-        type = "message"
+      read_wildlife_workbook(
+        input$excel_file$datapath
       )
       
     }, error = function(e) {
       
-      workbook_sheets(character())
-      
-      updateSelectInput(
-        session,
-        "workbook_sheet",
-        choices = c("No workbook uploaded" = ""),
-        selected = ""
-      )
-      
       showNotification(
-        paste("Workbook upload error:", e$message),
+        
+        paste(
+          "Workbook error:",
+          conditionMessage(e)
+        ),
+        
         type = "error",
-        duration = NULL
+        duration = 10
+        
       )
+      
+      NULL
       
     })
     
   })
   
   
-  # Display workbook upload information
-  output$workbook_status <- renderText({
+  # ==========================================================
+  # C. EXTRACT UPLOADED ANIMAL RECORDS
+  # ==========================================================
+  
+  uploaded_animals <- reactive({
     
-    req(input$excel_file)
+    req(workbook_data())
     
-    sheets <- workbook_sheets()
-    
-    if (length(sheets) == 0) {
-      return("No worksheets could be read from this workbook.")
-    }
-    
-    paste0(
-      "Uploaded workbook: ",
-      input$excel_file$name,
-      "\nNumber of worksheets: ",
-      length(sheets),
-      "\nWorksheets: ",
-      paste(sheets, collapse = ", ")
+    extract_workbook_animals(
+      workbook_data()
     )
     
   })
   
   
-  # Read and preview selected worksheet
-  workbook_preview_data <- reactive({
+  # ==========================================================
+  # D. COMBINE UPLOADED AND MANUAL RECORDS
+  # ==========================================================
+  
+  combined_data <- reactive({
     
-    req(input$excel_file)
-    req(input$workbook_sheet)
+    uploaded <- uploaded_animals()
     
-    validate(
-      need(
-        input$workbook_sheet %in% workbook_sheets(),
-        "Please select a valid worksheet."
+    manual <- animal_records()
+    
+    combined <- bind_rows(
+      uploaded,
+      manual
+    )
+    
+    # Remove duplicate animal IDs.
+    # Uploaded records are kept first.
+    
+    combined <- combined %>%
+      
+      filter(
+        !is.na(Animal_ID),
+        Animal_ID != ""
+      ) %>%
+      
+      distinct(
+        Animal_ID,
+        .keep_all = TRUE
       )
-    )
     
-    preview <- readxl::read_excel(
-      input$excel_file$datapath,
-      sheet = input$workbook_sheet,
-      col_names = FALSE,
-      n_max = 40
-    )
-    
-    preview <- as.data.frame(preview)
-    
-    # Limit preview to first 30 columns
-    if (ncol(preview) > 30) {
-      preview <- preview[, 1:30, drop = FALSE]
-    }
-    
-    # Give columns readable temporary names
-    names(preview) <- paste("Column", seq_len(ncol(preview)))
-    
-    preview
+    combined
     
   })
   
   
-  # Display worksheet preview
-  output$workbook_preview <- DT::renderDT({
-    
-    preview <- workbook_preview_data()
-    
-    DT::datatable(
-      preview,
-      rownames = FALSE,
-      options = list(
-        pageLength = 10,
-        scrollX = TRUE,
-        scrollY = "400px",
-        autoWidth = TRUE
-      )
-    )
-    
-  })
-  
-  
-  
-  # =======================================================
-  # 2. ADD ANIMAL TO REGISTER
-  # =======================================================
-  
-  observeEvent(input$add_animal, {
-    
-    animal_id <- trimws(input$entry_id)
-    
-    # Validate animal ID
-    if (is.null(animal_id) || animal_id == "") {
-      showNotification(
-        "Please enter an Animal ID or Name.",
-        type = "error"
-      )
-      return()
-    }
-    
-    current_data <- animal_records()
-    
-    # Check for duplicate animal ID
-    if (any(
-      tolower(current_data$Animal_ID) == tolower(animal_id)
-    )) {
-      showNotification(
-        "This Animal ID or Name already exists in the register.",
-        type = "error"
-      )
-      return()
-    }
-    
-    # Standardise sex
-    animal_sex <- standardise_sex(input$entry_sex)
-    
-    # Get date of birth
-    animal_dob <- safe_date(input$entry_dob)
-    
-    # Get manually entered age
-    entered_age <- safe_numeric(input$entry_age)
-    
-    # Calculate age from DOB if available
-    if (!is.na(animal_dob)) {
-      
-      if (animal_dob > Sys.Date()) {
-        showNotification(
-          "Date of birth cannot be in the future.",
-          type = "error"
-        )
-        return()
-      }
-      
-      animal_age <- calculate_age(animal_dob)
-      
-    } else {
-      animal_age <- entered_age
-    }
-    
-    # Validate age
-    if (!is.na(animal_age) && animal_age < 0) {
-      showNotification(
-        "Age cannot be negative.",
-        type = "error"
-      )
-      return()
-    }
-    
-    # Determine age class
-    selected_age_class <- input$entry_age_class
-    
-    if (is.null(selected_age_class) ||
-        selected_age_class == "Unknown") {
-      
-      animal_age_class <- derive_age_class(animal_age)
-      
-    } else {
-      animal_age_class <- selected_age_class
-    }
-    
-    # Determine age category
-    animal_age_category <- trimws(input$entry_age_category)
-    
-    if (is.null(animal_age_category) ||
-        animal_age_category == "") {
-      animal_age_category <- "Unknown"
-    }
-    
-    # Notch details
-    animal_notch <- trimws(input$entry_notch)
-    
-    if (is.null(animal_notch) || animal_notch == "") {
-      animal_notch <- "Not Recorded"
-    }
-    
-    animal_notch_status <- input$entry_notch_status
-    
-    if (is.null(animal_notch_status) ||
-        animal_notch_status == "") {
-      animal_notch_status <- "Unknown"
-    }
-    
-    # Last sighting details
-    animal_area <- trimws(input$entry_area)
-    
-    if (is.null(animal_area) || animal_area == "") {
-      animal_area <- "Unknown"
-    }
-    
-    animal_sighting_date <- safe_date(input$entry_sighting_date)
-    
-    if (!is.na(animal_sighting_date) &&
-        animal_sighting_date > Sys.Date()) {
-      showNotification(
-        "Date of last sighting cannot be in the future.",
-        type = "error"
-      )
-      return()
-    }
-    
-    animal_sightings <- safe_numeric(input$entry_sightings)
-    
-    if (is.na(animal_sightings)) {
-      animal_sightings <- 0
-    }
-    
-    if (animal_sightings < 0 ||
-        animal_sightings != floor(animal_sightings)) {
-      showNotification(
-        "Number of sightings must be a non-negative whole number.",
-        type = "error"
-      )
-      return()
-    }
-    
-    # Create new animal record
-    new_animal <- data.frame(
-      Animal_ID = animal_id,
-      Sex = animal_sex,
-      DOB = animal_dob,
-      Age = animal_age,
-      Age_Class = animal_age_class,
-      Age_Category = animal_age_category,
-      Notch = animal_notch,
-      Notch_Status = animal_notch_status,
-      Area_Last_Sighted = animal_area,
-      Date_Last_Sighting = animal_sighting_date,
-      Sightings_Last_6_Months = animal_sightings,
-      Source_Sheet = "Manual Entry",
-      stringsAsFactors = FALSE
-    )
-    
-    # Add new animal to existing register
-    updated_data <- bind_rows(
-      current_data,
-      new_animal
-    )
-    
-    animal_records(updated_data)
-    
-    showNotification(
-      paste(animal_id, "was successfully added to the register."),
-      type = "message"
-    )
-    
-    # Clear form after successful addition
-    updateTextInput(session, "entry_id", value = "")
-    updateSelectInput(session, "entry_sex", selected = "Unknown")
-    updateDateInput(session, "entry_dob", value = NA)
-    updateNumericInput(session, "entry_age", value = NA)
-    updateSelectInput(session, "entry_age_class", selected = "Unknown")
-    updateTextInput(session, "entry_age_category", value = "")
-    updateTextInput(session, "entry_notch", value = "")
-    updateSelectInput(
-      session,
-      "entry_notch_status",
-      selected = "Unknown"
-    )
-    updateTextInput(session, "entry_area", value = "")
-    updateDateInput(session, "entry_sighting_date", value = NA)
-    updateNumericInput(session, "entry_sightings", value = 0)
-    
-  })
-  
-  
-  # =======================================================
-  # 3. CLEAR REGISTER FORM
-  # =======================================================
-  
-  observeEvent(input$clear_register_form, {
-    
-    updateTextInput(session, "entry_id", value = "")
-    
-    updateSelectInput(
-      session,
-      "entry_sex",
-      selected = "Unknown"
-    )
-    
-    updateDateInput(
-      session,
-      "entry_dob",
-      value = NA
-    )
-    
-    updateNumericInput(
-      session,
-      "entry_age",
-      value = NA
-    )
-    
-    updateSelectInput(
-      session,
-      "entry_age_class",
-      selected = "Unknown"
-    )
-    
-    updateTextInput(
-      session,
-      "entry_age_category",
-      value = ""
-    )
-    
-    updateTextInput(
-      session,
-      "entry_notch",
-      value = ""
-    )
-    
-    updateSelectInput(
-      session,
-      "entry_notch_status",
-      selected = "Unknown"
-    )
-    
-    updateTextInput(
-      session,
-      "entry_area",
-      value = ""
-    )
-    
-    updateDateInput(
-      session,
-      "entry_sighting_date",
-      value = NA
-    )
-    
-    updateNumericInput(
-      session,
-      "entry_sightings",
-      value = 0
-    )
-    
-  })
-  
-  
-  # =======================================================
-  # 4. FILTER ANIMAL RECORDS
-  # =======================================================
+  # ==========================================================
+  # E. FILTER DATA
+  # ==========================================================
   
   filtered_data <- reactive({
     
-    data <- animal_records()
+    data <- combined_data()
     
-    if (input$sex_filter != "All") {
-      data <- data %>%
-        filter(Sex == input$sex_filter)
+    if (nrow(data) == 0) {
+      return(data)
     }
     
-    if (input$age_class_filter != "All") {
+    if (
+      !is.null(input$filter_sex) &&
+      input$filter_sex != "All"
+    ) {
+      
       data <- data %>%
-        filter(Age_Class == input$age_class_filter)
+        
+        filter(
+          Sex == input$filter_sex
+        )
+      
     }
     
-    if (input$age_category_filter != "All") {
+    if (
+      !is.null(input$filter_age_class) &&
+      input$filter_age_class != "All"
+    ) {
+      
       data <- data %>%
-        filter(Age_Category == input$age_category_filter)
+        
+        filter(
+          Age_Class == input$filter_age_class
+        )
+      
     }
     
     data
+    
   })
   
   
-  # =======================================================
-  # 5. UPDATE FILTER OPTIONS
-  # =======================================================
+  # ==========================================================
+  # F. UPDATE AGE CLASS FILTER
+  # ==========================================================
   
   observe({
     
-    data <- animal_records()
+    data <- combined_data()
     
-    age_classes <- sort(unique(data$Age_Class))
-    age_classes <- age_classes[!is.na(age_classes)]
-    
-    age_categories <- sort(unique(data$Age_Category))
-    age_categories <- age_categories[!is.na(age_categories)]
-    
-    current_class <- isolate(input$age_class_filter)
-    current_category <- isolate(input$age_category_filter)
-    
-    class_choices <- c("All", age_classes)
-    category_choices <- c("All", age_categories)
+    age_classes <- sort(unique(
+      na.omit(data$Age_Class)
+    ))
     
     updateSelectInput(
+      
       session,
-      "age_class_filter",
-      choices = class_choices,
-      selected = if (!is.null(current_class) &&
-                     current_class %in% class_choices) {
-        current_class
-      } else {
-        "All"
-      }
-    )
-    
-    updateSelectInput(
-      session,
-      "age_category_filter",
-      choices = category_choices,
-      selected = if (!is.null(current_category) &&
-                     current_category %in% category_choices) {
-        current_category
-      } else {
-        "All"
-      }
+      
+      "filter_age_class",
+      
+      choices = c(
+        "All",
+        age_classes
+      ),
+      
+      selected = "All"
+      
     )
     
   })
   
   
-  # =======================================================
-  # 6. POPULATION OVERVIEW VALUE BOXES
-  # =======================================================
+  # ==========================================================
+  # G. WORKBOOK STATUS
+  # ==========================================================
+  
+  output$workbook_status <- renderText({
+    
+    if (is.null(input$excel_file)) {
+      
+      return(
+        "Please upload an Excel workbook to begin."
+      )
+      
+    }
+    
+    workbook <- workbook_data()
+    
+    if (is.null(workbook)) {
+      
+      return(
+        "The workbook could not be read. Check that it is a valid Excel file."
+      )
+      
+    }
+    
+    records <- uploaded_animals()
+    
+    sheet_count <- length(workbook)
+    
+    if (nrow(records) > 0) {
+      
+      paste0(
+        
+        "Workbook loaded successfully. ",
+        
+        sheet_count,
+        
+        " worksheets found. ",
+        
+        nrow(records),
+        
+        " individual animal records detected."
+        
+      )
+      
+    } else {
+      
+      paste0(
+        
+        "Workbook loaded successfully. ",
+        
+        sheet_count,
+        
+        " worksheets found, but no individual animal register was detected. ",
+        
+        "The workbook worksheets can still be previewed below."
+        
+      )
+      
+    }
+    
+  })
+  
+  
+  # ==========================================================
+  # H. UPDATE WORKSHEET DROPDOWN
+  # ==========================================================
+  
+  observeEvent(workbook_data(), {
+    
+    workbook <- workbook_data()
+    
+    if (is.null(workbook)) {
+      return()
+    }
+    
+    updateSelectInput(
+      
+      session,
+      
+      "workbook_sheet",
+      
+      choices = names(workbook),
+      
+      selected = names(workbook)[1]
+      
+    )
+    
+  })
+  
+  
+  # ==========================================================
+  # I. ADD MANUAL ANIMAL RECORD
+  # ==========================================================
+  
+  observeEvent(input$add_animal, {
+    
+    req(input$animal_id)
+    
+    animal_id <- trimws(input$animal_id)
+    
+    if (animal_id == "") {
+      
+      showNotification(
+        "Please enter an animal ID or name.",
+        type = "error"
+      )
+      
+      return()
+      
+    }
+    
+    if (
+      is.na(input$animal_dob) &&
+      is.na(input$animal_age)
+    ) {
+      
+      showNotification(
+        "Please enter either a date of birth or an age.",
+        type = "error"
+      )
+      
+      return()
+      
+    }
+    
+    existing <- combined_data()
+    
+    if (
+      nrow(existing) > 0 &&
+      animal_id %in% existing$Animal_ID
+    ) {
+      
+      showNotification(
+        "This animal ID already exists in the register.",
+        type = "error"
+      )
+      
+      return()
+      
+    }
+    
+    dob <- safe_date(input$animal_dob)
+    
+    age <- safe_numeric(input$animal_age)
+    
+    if (
+      is.na(age) &&
+      !is.na(dob)
+    ) {
+      
+      age <- as.numeric(
+        difftime(
+          Sys.Date(),
+          dob,
+          units = "days"
+        )
+      ) / 365.25
+      
+    }
+    
+    new_animal <- data.frame(
+      
+      Animal_ID = animal_id,
+      
+      Sex = input$animal_sex,
+      
+      Notch_Number = safe_text(input$animal_notch),
+      
+      Date_of_Birth = dob,
+      
+      Age = age,
+      
+      Age_Class = safe_text(input$animal_age_class),
+      
+      Age_Category = safe_text(input$animal_age_category),
+      
+      stringsAsFactors = FALSE
+      
+    )
+    
+    updated <- bind_rows(
+      animal_records(),
+      new_animal
+    )
+    
+    animal_records(updated)
+    
+    showNotification(
+      "Animal record added successfully.",
+      type = "message"
+    )
+    
+    updateTextInput(
+      session,
+      "animal_id",
+      value = ""
+    )
+    
+    updateTextInput(
+      session,
+      "animal_notch",
+      value = ""
+    )
+    
+    updateNumericInput(
+      session,
+      "animal_age",
+      value = NA
+    )
+    
+    updateTextInput(
+      session,
+      "animal_age_class",
+      value = ""
+    )
+    
+    updateTextInput(
+      session,
+      "animal_age_category",
+      value = ""
+    )
+    
+  })
+  
+  
+  # ==========================================================
+  # J. TOTAL POPULATION
+  # ==========================================================
   
   output$total_animals <- renderValueBox({
     
+    data <- filtered_data()
+    
     valueBox(
-      value = nrow(filtered_data()),
+      
+      value = nrow(data),
+      
       subtitle = "Total Animals",
+      
       icon = icon("paw"),
+      
       color = "green"
+      
     )
     
   })
   
+  
+  # ==========================================================
+  # K. MALE POPULATION
+  # ==========================================================
   
   output$male_animals <- renderValueBox({
     
+    data <- filtered_data()
+    
+    total <- sum(
+      data$Sex == "Male",
+      na.rm = TRUE
+    )
+    
     valueBox(
-      value = sum(filtered_data()$Sex == "Male", na.rm = TRUE),
+      
+      value = total,
+      
       subtitle = "Male Animals",
+      
       icon = icon("mars"),
+      
       color = "blue"
+      
     )
     
   })
   
+  
+  # ==========================================================
+  # L. FEMALE POPULATION
+  # ==========================================================
   
   output$female_animals <- renderValueBox({
     
+    data <- filtered_data()
+    
+    total <- sum(
+      data$Sex == "Female",
+      na.rm = TRUE
+    )
+    
     valueBox(
-      value = sum(filtered_data()$Sex == "Female", na.rm = TRUE),
+      
+      value = total,
+      
       subtitle = "Female Animals",
+      
       icon = icon("venus"),
+      
       color = "purple"
+      
     )
     
   })
   
+  
+  # ==========================================================
+  # M. UNKNOWN SEX
+  # ==========================================================
   
   output$unknown_animals <- renderValueBox({
     
+    data <- filtered_data()
+    
+    total <- sum(
+      data$Sex == "Unknown",
+      na.rm = TRUE
+    )
+    
     valueBox(
-      value = sum(
-        filtered_data()$Sex %in% c("Unknown", "Unclassified"),
-        na.rm = TRUE
-      ),
-      subtitle = "Unknown / Unclassified",
-      icon = icon("question-circle"),
+      
+      value = total,
+      
+      subtitle = "Unknown Sex",
+      
+      icon = icon("question"),
+      
       color = "yellow"
+      
     )
     
   })
   
   
-  # =======================================================
-  # 7. POPULATION BY SEX
-  # =======================================================
+  # ==========================================================
+  # N. POPULATION BY SEX
+  # ==========================================================
   
   output$sex_plot <- renderPlot({
     
     data <- filtered_data()
     
-    if (nrow(data) == 0) {
-      return(empty_plot())
-    }
+    validate(
+      need(
+        nrow(data) > 0,
+        "No individual animal records are available."
+      )
+    )
     
-    plot_data <- data %>%
+    sex_data <- data %>%
+      
       count(Sex)
     
     ggplot(
-      plot_data,
-      aes(x = Sex, y = n, fill = Sex)
+      sex_data,
+      aes(
+        x = Sex,
+        y = n,
+        fill = Sex
+      )
     ) +
+      
       geom_col() +
+      
       geom_text(
         aes(label = n),
-        vjust = -0.4,
-        size = 5
+        vjust = -0.5
       ) +
-      scale_fill_brewer(palette = "Greens") +
+      
       labs(
         x = "Sex",
         y = "Number of Animals"
       ) +
+      
       theme_minimal() +
-      theme(legend.position = "none")
+      
+      theme(
+        legend.position = "none"
+      )
+    
   })
   
   
-  # =======================================================
-  # 8. POPULATION BY AGE CLASS
-  # =======================================================
+  # ==========================================================
+  # O. POPULATION BY AGE CLASS
+  # ==========================================================
   
   output$age_class_plot <- renderPlot({
     
-    data <- filtered_data()
+    data <- filtered_data() %>%
+      
+      filter(
+        !is.na(Age_Class),
+        Age_Class != ""
+      )
     
-    if (nrow(data) == 0) {
-      return(empty_plot())
-    }
+    validate(
+      need(
+        nrow(data) > 0,
+        "No age-class information is available."
+      )
+    )
     
-    plot_data <- data %>%
+    age_data <- data %>%
+      
       count(Age_Class)
     
     ggplot(
-      plot_data,
-      aes(x = Age_Class, y = n)
+      age_data,
+      aes(
+        x = reorder(Age_Class, -n),
+        y = n
+      )
     ) +
-      geom_col(fill = "#2e8b57") +
+      
+      geom_col(fill = "#2e7d32") +
+      
       geom_text(
         aes(label = n),
-        vjust = -0.4,
-        size = 5
+        vjust = -0.5
       ) +
+      
       labs(
         x = "Age Class",
         y = "Number of Animals"
       ) +
+      
       theme_minimal()
+    
   })
   
   
-  # =======================================================
-  # 9. POPULATION BY AGE CATEGORY
-  # =======================================================
+  # ==========================================================
+  # P. POPULATION BY AGE CATEGORY
+  # ==========================================================
   
   output$age_category_plot <- renderPlot({
     
-    data <- filtered_data()
+    data <- filtered_data() %>%
+      
+      filter(
+        !is.na(Age_Category),
+        Age_Category != ""
+      )
     
-    if (nrow(data) == 0) {
-      return(empty_plot())
-    }
+    validate(
+      need(
+        nrow(data) > 0,
+        "No age-category information is available."
+      )
+    )
     
-    plot_data <- data %>%
+    category_data <- data %>%
+      
       count(Age_Category)
     
     ggplot(
-      plot_data,
+      category_data,
       aes(
-        x = reorder(Age_Category, n),
+        x = reorder(Age_Category, -n),
         y = n
       )
     ) +
+      
       geom_col(fill = "#66bb6a") +
-      coord_flip() +
+      
       geom_text(
         aes(label = n),
-        hjust = -0.3,
-        size = 5
+        vjust = -0.5
       ) +
+      
       labs(
         x = "Age Category",
         y = "Number of Animals"
       ) +
+      
       theme_minimal()
+    
   })
   
   
-  # =======================================================
-  # 10. NOTCH STATUS
-  # =======================================================
+  # ==========================================================
+  # Q. POPULATION BY NOTCH NUMBER
+  # ==========================================================
   
   output$notch_plot <- renderPlot({
     
-    data <- filtered_data()
+    data <- filtered_data() %>%
+      
+      filter(
+        !is.na(Notch_Number),
+        Notch_Number != ""
+      )
     
-    if (nrow(data) == 0) {
-      return(empty_plot())
-    }
+    validate(
+      need(
+        nrow(data) > 0,
+        "No notch-number information is available."
+      )
+    )
     
-    plot_data <- data %>%
-      count(Notch_Status)
+    notch_data <- data %>%
+      
+      count(Notch_Number) %>%
+      
+      arrange(desc(n)) %>%
+      
+      head(20)
     
     ggplot(
-      plot_data,
-      aes(x = Notch_Status, y = n, fill = Notch_Status)
+      notch_data,
+      aes(
+        x = reorder(Notch_Number, n),
+        y = n
+      )
     ) +
-      geom_col() +
-      geom_text(
-        aes(label = n),
-        vjust = -0.4,
-        size = 5
-      ) +
-      scale_fill_brewer(palette = "Greens") +
+      
+      geom_col(fill = "#388e3c") +
+      
+      coord_flip() +
+      
       labs(
-        x = "Notch Status",
+        x = "Notch Number",
         y = "Number of Animals"
       ) +
-      theme_minimal() +
-      theme(legend.position = "none")
+      
+      theme_minimal()
+    
   })
   
   
-  # =======================================================
-  # 11. DEMOGRAPHIC SEX DISTRIBUTION
-  # =======================================================
+  # ==========================================================
+  # R. DEMOGRAPHIC SEX DISTRIBUTION
+  # ==========================================================
   
   output$demographic_sex_plot <- renderPlot({
     
     data <- filtered_data()
     
-    if (nrow(data) == 0) {
-      return(empty_plot())
-    }
+    validate(
+      need(
+        nrow(data) > 0,
+        "No animal records are available."
+      )
+    )
     
-    plot_data <- data %>%
+    sex_data <- data %>%
+      
       count(Sex)
     
     ggplot(
-      plot_data,
-      aes(x = "", y = n, fill = Sex)
-    ) +
-      geom_col(width = 1) +
-      coord_polar(theta = "y") +
-      labs(fill = "Sex") +
-      theme_void()
-  })
-  
-  
-  # =======================================================
-  # 12. SEX BY AGE CLASS
-  # =======================================================
-  
-  output$sex_age_class_plot <- renderPlot({
-    
-    data <- filtered_data()
-    
-    if (nrow(data) == 0) {
-      return(empty_plot())
-    }
-    
-    plot_data <- data %>%
-      count(Age_Class, Sex)
-    
-    ggplot(
-      plot_data,
+      sex_data,
       aes(
-        x = Age_Class,
+        x = "",
         y = n,
         fill = Sex
       )
     ) +
-      geom_col(position = "dodge") +
+      
+      geom_col(
+        width = 1
+      ) +
+      
+      coord_polar("y") +
+      
+      labs(
+        x = NULL,
+        y = NULL,
+        fill = "Sex"
+      ) +
+      
+      theme_void()
+    
+  })
+  
+  
+  # ==========================================================
+  # S. SEX BY AGE CLASS
+  # ==========================================================
+  
+  output$sex_age_class_plot <- renderPlot({
+    
+    data <- filtered_data() %>%
+      
+      filter(
+        !is.na(Age_Class),
+        Age_Class != ""
+      )
+    
+    validate(
+      need(
+        nrow(data) > 0,
+        "No age-class information is available."
+      )
+    )
+    
+    ggplot(
+      data,
+      aes(
+        x = Age_Class,
+        fill = Sex
+      )
+    ) +
+      
+      geom_bar(
+        position = "dodge"
+      ) +
+      
       labs(
         x = "Age Class",
         y = "Number of Animals",
         fill = "Sex"
       ) +
-      scale_fill_brewer(palette = "Greens") +
+      
       theme_minimal()
+    
   })
   
   
-  # =======================================================
-  # 13. AGE CATEGORY BY SEX
-  # =======================================================
+  # ==========================================================
+  # T. AGE CATEGORY BY SEX
+  # ==========================================================
   
-  output$age_category_sex_plot <- renderPlot({
+  output$category_sex_plot <- renderPlot({
     
-    data <- filtered_data()
+    data <- filtered_data() %>%
+      
+      filter(
+        !is.na(Age_Category),
+        Age_Category != ""
+      )
     
-    if (nrow(data) == 0) {
-      return(empty_plot())
-    }
-    
-    plot_data <- data %>%
-      count(Age_Category, Sex)
+    validate(
+      need(
+        nrow(data) > 0,
+        "No age-category information is available."
+      )
+    )
     
     ggplot(
-      plot_data,
+      data,
       aes(
         x = Age_Category,
-        y = n,
         fill = Sex
       )
     ) +
-      geom_col(position = "dodge") +
+      
+      geom_bar(
+        position = "dodge"
+      ) +
+      
       labs(
         x = "Age Category",
         y = "Number of Animals",
         fill = "Sex"
       ) +
-      scale_fill_brewer(palette = "Greens") +
+      
       theme_minimal()
+    
   })
   
   
-  # =======================================================
-  # 14. AGE ANALYSIS VALUE BOXES
-  # =======================================================
+  # ==========================================================
+  # U. AVERAGE AGE
+  # ==========================================================
   
   output$average_age <- renderValueBox({
     
-    ages <- filtered_data()$Age
-    ages <- ages[!is.na(ages)]
+    data <- filtered_data()
+    
+    ages <- data$Age[
+      !is.na(data$Age) &
+        is.finite(data$Age)
+    ]
     
     average <- if (length(ages) > 0) {
       round(mean(ages), 1)
@@ -921,19 +1382,32 @@ server <- function(input, output, session) {
     }
     
     valueBox(
+      
       value = average,
+      
       subtitle = "Average Age (Years)",
+      
       icon = icon("calculator"),
+      
       color = "green"
+      
     )
     
   })
   
   
+  # ==========================================================
+  # V. YOUNGEST ANIMAL
+  # ==========================================================
+  
   output$youngest_age <- renderValueBox({
     
-    ages <- filtered_data()$Age
-    ages <- ages[!is.na(ages)]
+    data <- filtered_data()
+    
+    ages <- data$Age[
+      !is.na(data$Age) &
+        is.finite(data$Age)
+    ]
     
     youngest <- if (length(ages) > 0) {
       round(min(ages), 1)
@@ -942,19 +1416,32 @@ server <- function(input, output, session) {
     }
     
     valueBox(
+      
       value = youngest,
-      subtitle = "Youngest Animal (Years)",
-      icon = icon("child"),
-      color = "blue"
+      
+      subtitle = "Youngest Age (Years)",
+      
+      icon = icon("baby"),
+      
+      color = "aqua"
+      
     )
     
   })
   
   
+  # ==========================================================
+  # W. OLDEST ANIMAL
+  # ==========================================================
+  
   output$oldest_age <- renderValueBox({
     
-    ages <- filtered_data()$Age
-    ages <- ages[!is.na(ages)]
+    data <- filtered_data()
+    
+    ages <- data$Age[
+      !is.na(data$Age) &
+        is.finite(data$Age)
+    ]
     
     oldest <- if (length(ages) > 0) {
       round(max(ages), 1)
@@ -963,142 +1450,220 @@ server <- function(input, output, session) {
     }
     
     valueBox(
+      
       value = oldest,
-      subtitle = "Oldest Animal (Years)",
+      
+      subtitle = "Oldest Age (Years)",
+      
       icon = icon("paw"),
+      
       color = "purple"
+      
     )
     
   })
   
   
-  # =======================================================
-  # 15. AGE HISTOGRAM
-  # =======================================================
+  # ==========================================================
+  # X. AGE DISTRIBUTION
+  # ==========================================================
   
   output$age_histogram <- renderPlot({
     
     data <- filtered_data() %>%
-      filter(!is.na(Age))
+      
+      filter(
+        !is.na(Age),
+        is.finite(Age)
+      )
     
-    if (nrow(data) == 0) {
-      return(empty_plot("No age information available"))
-    }
+    validate(
+      need(
+        nrow(data) > 0,
+        "No age information is available."
+      )
+    )
     
     ggplot(
       data,
       aes(x = Age)
     ) +
+      
       geom_histogram(
-        bins = 10,
-        fill = "#2e8b57",
+        bins = 15,
+        fill = "#2e7d32",
         colour = "white"
       ) +
+      
       labs(
         x = "Age (Years)",
         y = "Number of Animals"
       ) +
+      
       theme_minimal()
+    
   })
   
   
-  # =======================================================
-  # 16. BIRTHS BY YEAR
-  # =======================================================
+  # ==========================================================
+  # Y. BIRTHS BY YEAR
+  # ==========================================================
   
-  output$births_by_year <- renderPlot({
+  output$birth_year_plot <- renderPlot({
     
     data <- filtered_data() %>%
-      filter(!is.na(DOB)) %>%
-      mutate(Birth_Year = format(DOB, "%Y")) %>%
+      
+      filter(
+        !is.na(Date_of_Birth)
+      ) %>%
+      
+      mutate(
+        Birth_Year = format(
+          Date_of_Birth,
+          "%Y"
+        )
+      ) %>%
+      
       count(Birth_Year)
     
-    if (nrow(data) == 0) {
-      return(empty_plot("No dates of birth available"))
-    }
+    validate(
+      need(
+        nrow(data) > 0,
+        "No date-of-birth information is available."
+      )
+    )
     
     ggplot(
       data,
-      aes(x = Birth_Year, y = n)
+      aes(
+        x = Birth_Year,
+        y = n
+      )
     ) +
-      geom_col(fill = "#66bb6a") +
+      
+      geom_col(fill = "#43a047") +
+      
       geom_text(
         aes(label = n),
-        vjust = -0.4
+        vjust = -0.5
       ) +
+      
       labs(
         x = "Birth Year",
         y = "Number of Animals"
       ) +
+      
       theme_minimal()
+    
   })
   
   
-  # =======================================================
-  # 17. ANIMAL REGISTER TABLE
-  # =======================================================
+  # ==========================================================
+  # Z. ANIMAL REGISTER TABLE
+  # ==========================================================
   
-  output$animal_table <- renderDT({
+  output$register_table <- renderDT({
     
     data <- filtered_data()
     
-    display_data <- data %>%
-      select(
-        Animal_ID,
-        Sex,
-        DOB,
-        Age,
-        Age_Class,
-        Age_Category,
-        Notch,
-        Notch_Status,
-        Area_Last_Sighted,
-        Date_Last_Sighting,
-        Sightings_Last_6_Months
-      )
-    
     DT::datatable(
-      display_data,
+      
+      data,
+      
       rownames = FALSE,
-      filter = "top",
-      extensions = "Buttons",
+      
       options = list(
+        
         pageLength = 10,
+        
         scrollX = TRUE,
-        autoWidth = TRUE,
-        dom = "Bfrtip",
-        buttons = c("copy", "csv", "excel")
+        
+        autoWidth = TRUE
+        
       )
+      
     )
     
   })
   
   
-  # =======================================================
-  # 18. DOWNLOAD ANIMAL REGISTER
-  # =======================================================
+  # ==========================================================
+  # AA. DOWNLOAD ANIMAL REGISTER
+  # ==========================================================
   
-  output$download_data <- downloadHandler(
+  output$download_register <- downloadHandler(
     
     filename = function() {
+      
       paste0(
         "Wildlife_Animal_Register_",
         Sys.Date(),
         ".csv"
       )
+      
     },
     
     content = function(file) {
       
       write.csv(
-        filtered_data(),
+        combined_data(),
         file,
         row.names = FALSE,
         na = ""
       )
       
     }
+    
   )
+  
+  
+  # ==========================================================
+  # AB. PREVIEW SELECTED WORKSHEET
+  # ==========================================================
+  
+  output$workbook_preview <- renderDT({
+    
+    req(workbook_data())
+    
+    req(input$workbook_sheet)
+    
+    workbook <- workbook_data()
+    
+    req(input$workbook_sheet %in% names(workbook))
+    
+    preview <- as.data.frame(
+      workbook[[input$workbook_sheet]]
+    )
+    
+    # Give the columns readable names
+    
+    colnames(preview) <- paste0(
+      "Column_",
+      seq_len(ncol(preview))
+    )
+    
+    DT::datatable(
+      
+      preview,
+      
+      rownames = TRUE,
+      
+      options = list(
+        
+        pageLength = 15,
+        
+        scrollX = TRUE,
+        
+        scrollY = "500px",
+        
+        autoWidth = TRUE
+        
+      )
+      
+    )
+    
+  })
+  
   
 }
 
